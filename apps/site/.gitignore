@@ -1,0 +1,12 @@
+# Next.js
+.next/
+out/
+
+# Generated at build time
+public/registry.json
+public/downloads/
+
+# Environment
+.env
+.env.local
+.env.*.local
