@@ -16,7 +16,7 @@ description: |
 
 ## How It Works
 
-`package.json 분석` → `스택 감지` → `스킬 설치` → `결과 확인`
+`package.json 분석` → `스택 감지` → `스킬 설치` → `MCP 설정` → `결과 확인`
 
 ## Steps
 
@@ -68,7 +68,25 @@ npx skills add vercel-labs/next-skills --skill next-cache-components -y
 | `next-best-practices` | App Router, RSC, 데이터 패턴, 메타데이터 |
 | `next-cache-components` | PPR, `use cache`, cacheLife/cacheTag |
 
-### 3. 설치 결과 확인
+### 3. MCP 설정
+
+모든 MCP는 프로젝트별로 구성합니다 (`.mcp.json`에 저장).
+
+```bash
+claude mcp add playwright npx @playwright/mcp@latest
+claude mcp add chrome-devtools npx chrome-devtools-mcp@latest
+claude mcp add serena uvx -- --from git+https://github.com/oraios/serena serena start-mcp-server
+claude mcp add --transport http figma https://mcp.figma.com/mcp
+```
+
+| MCP | 역할 |
+|-----|------|
+| `@playwright/mcp` | 브라우저 테스트, E2E 자동화 |
+| `chrome-devtools-mcp` | Chrome DevTools 연동 — 콘솔, 네트워크, DOM 검사 |
+| `serena` | 심볼 기반 코드 탐색·편집, 30+ 언어 지원 |
+| `figma` | Figma 디자인 레이어 → 코드 변환 (Figma 로그인 필요) |
+
+### 4. 설치 결과 확인
 
 ```bash
 npx skills list
@@ -78,6 +96,6 @@ npx skills list
 
 ## Notes
 
-- `-y` 플래그로 확인 프롬프트를 건너뜁니다
-- 이미 설치된 스킬은 안전하게 재설치(idempotent)됩니다
-- 글로벌 설치가 필요하면 `-g` 플래그를 추가합니다
+- 스킬: `-y` 플래그로 확인 프롬프트를 건너뜁니다
+- 스킬은 이미 설치되어 있어도 안전하게 재설치(idempotent)됩니다
+- MCP는 프로젝트 루트 `.mcp.json`에 저장해 프로젝트별로 격리합니다
