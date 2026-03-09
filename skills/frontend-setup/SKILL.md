@@ -70,27 +70,25 @@ npx skills add vercel-labs/next-skills --skill next-cache-components -y
 
 ### 3. MCP 설정
 
-MCP는 **프로젝트별**로 구성합니다. 프로젝트 루트의 `.mcp.json`을 생성하거나 업데이트합니다.
+#### 프로젝트별 MCP (`.mcp.json`에 저장)
 
-> **주의**: `.mcp.json`은 `.gitignore`에 추가하거나, API 키는 반드시 환경변수로 관리하세요.
-
-#### Core MCP (항상 추가)
-
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"],
-      "comment": "브라우저 테스트 및 자동화"
-    }
-  }
-}
+```bash
+claude mcp add playwright npx @playwright/mcp@latest
 ```
 
-| MCP | 역할 | 필요 환경변수 |
-|-----|------|--------------|
-| `@playwright/mcp` | 브라우저 테스트, E2E 자동화 | 없음 |
+| MCP | 역할 |
+|-----|------|
+| `@playwright/mcp` | 브라우저 테스트, E2E 자동화 |
+
+#### 유저 글로벌 MCP (`--scope user`, 모든 프로젝트 공유)
+
+```bash
+claude mcp add chrome-devtools --scope user npx chrome-devtools-mcp@latest
+```
+
+| MCP | 역할 |
+|-----|------|
+| `chrome-devtools-mcp` | Chrome DevTools 연동 — 콘솔, 네트워크, DOM 검사 |
 
 ### 4. 설치 결과 확인
 
