@@ -70,25 +70,21 @@ npx skills add vercel-labs/next-skills --skill next-cache-components -y
 
 ### 3. MCP 설정
 
-#### 프로젝트별 MCP (`.mcp.json`에 저장)
+모든 MCP는 프로젝트별로 구성합니다 (`.mcp.json`에 저장).
 
 ```bash
 claude mcp add playwright npx @playwright/mcp@latest
+claude mcp add chrome-devtools npx chrome-devtools-mcp@latest
+claude mcp add serena uvx -- --from git+https://github.com/oraios/serena serena start-mcp-server
+claude mcp add --transport http figma https://mcp.figma.com/mcp
 ```
 
 | MCP | 역할 |
 |-----|------|
 | `@playwright/mcp` | 브라우저 테스트, E2E 자동화 |
-
-#### 유저 글로벌 MCP (`--scope user`, 모든 프로젝트 공유)
-
-```bash
-claude mcp add chrome-devtools --scope user npx chrome-devtools-mcp@latest
-```
-
-| MCP | 역할 |
-|-----|------|
 | `chrome-devtools-mcp` | Chrome DevTools 연동 — 콘솔, 네트워크, DOM 검사 |
+| `serena` | 심볼 기반 코드 탐색·편집, 30+ 언어 지원 |
+| `figma` | Figma 디자인 레이어 → 코드 변환 (Figma 로그인 필요) |
 
 ### 4. 설치 결과 확인
 
