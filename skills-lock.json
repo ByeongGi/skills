@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "commit": {
+      "source": "ByeongGi/skills",
+      "sourceType": "github",
+      "computedHash": "c3f84ee15168fd7dbe66459056d49ceaebfc2b396eab2becbb12b48a524d32f0"
+    },
     "skill-creator": {
       "source": "anthropics/skills",
       "sourceType": "github",
