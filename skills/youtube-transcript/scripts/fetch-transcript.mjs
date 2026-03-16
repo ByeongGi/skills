@@ -9,7 +9,6 @@
  *   --video   VIDEO_ID or URL (required)
  *   --lang    Language code: ko, en, ja, zh, ... (default: ko)
  *   --auto    Prefer auto-generated captions (default: false)
- *   --max     Max characters to return (default: 20000)
  *   --help    Show this help
  *
  * Exit codes:
@@ -19,15 +18,14 @@
  *   3  Network error
  *
  * Output (stdout, JSON):
- *   { videoId, lang, isAuto, truncated, text }
+ *   { videoId, url, lang, isAuto, charCount, text }
  *
  * Diagnostics go to stderr.
  */
 
 const TIMEOUT_MS = 15000;
-const DEFAULT_MAX = 20000;
 
-// ── CLI parsing ──────────────────────────────────────────────────────────────
+// ── CLI parsing ───────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
 
@@ -40,7 +38,6 @@ Options:
   --video VIDEO   YouTube video ID (11 chars) or full URL  [required]
   --lang  LANG    Preferred caption language code (default: ko)
   --auto          Prefer auto-generated captions over manual ones
-  --max   N       Maximum characters to return (default: ${DEFAULT_MAX})
   --help          Show this help
 
 Exit codes:
@@ -52,7 +49,7 @@ Exit codes:
 Examples:
   node scripts/fetch-transcript.mjs --video dQw4w9WgXcQ
   node scripts/fetch-transcript.mjs --video https://youtu.be/dQw4w9WgXcQ --lang en
-  node scripts/fetch-transcript.mjs --video dQw4w9WgXcQ --lang ko --auto --max 5000`);
+  node scripts/fetch-transcript.mjs --video dQw4w9WgXcQ --lang ko --auto`);
   process.exit(0);
 }
 
@@ -64,16 +61,9 @@ function getFlag(name) {
 const rawVideo = getFlag('--video');
 const lang = getFlag('--lang') || 'ko';
 const preferAuto = args.includes('--auto');
-const maxLength = parseInt(getFlag('--max') || String(DEFAULT_MAX), 10);
 
 if (!rawVideo) {
-  console.error('Error: --video is required. Options: YouTube video ID or URL.');
-  console.error('Usage: node scripts/fetch-transcript.mjs --video <videoId|url> [--lang ko] [--auto] [--max 20000]');
-  process.exit(2);
-}
-
-if (isNaN(maxLength) || maxLength <= 0) {
-  console.error(`Error: --max must be a positive integer. Received: "${getFlag('--max')}"`);
+  console.error('Error: --video is required.');
   process.exit(2);
 }
 
@@ -103,7 +93,6 @@ function extractVideoId(input) {
 const videoId = extractVideoId(rawVideo);
 if (!videoId) {
   console.error(`Error: Could not extract a valid YouTube video ID from: "${rawVideo}"`);
-  console.error('Expected: 11-character video ID or a YouTube URL (watch, shorts, embed, youtu.be).');
   process.exit(2);
 }
 
@@ -140,6 +129,18 @@ function decodeEntities(v) {
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)));
 }
 
+// ── URL helpers ───────────────────────────────────────────────────────────────
+
+function ensureQueryParam(rawUrl, key, value) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!parsed.searchParams.has(key)) parsed.searchParams.set(key, value);
+    return parsed.toString();
+  } catch {
+    return rawUrl.includes('?') ? `${rawUrl}&${key}=${value}` : `${rawUrl}?${key}=${value}`;
+  }
+}
+
 // ── Track normalization ───────────────────────────────────────────────────────
 
 function normalizeTracks(raw) {
@@ -162,7 +163,7 @@ function selectTrack(tracks, lang, preferAuto) {
   return preferAuto ? (auto[0] || manual[0]) : (manual[0] || auto[0]);
 }
 
-// ── Fetch strategies ──────────────────────────────────────────────────────────
+// ── Strategy 1: timedtext list API ────────────────────────────────────────────
 
 async function fetchTracksFromTimedTextApi(videoId) {
   const xml = await fetchText(`https://www.youtube.com/api/timedtext?type=list&v=${videoId}`);
@@ -179,37 +180,43 @@ async function fetchTracksFromTimedTextApi(videoId) {
   return tracks;
 }
 
-async function fetchWatchPage(videoId) {
+// ── Strategy 2: YouTubei internal API ────────────────────────────────────────
+
+async function fetchWatchPageContext(videoId) {
   const html = await fetchText(`https://www.youtube.com/watch?v=${videoId}`);
   const apiKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
-  const version = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1];
-
-  const idx = html.indexOf('ytInitialPlayerResponse');
-  if (idx !== -1) {
-    const braceStart = html.indexOf('{', idx);
-    if (braceStart !== -1) {
-      let depth = 0;
-      for (let i = braceStart; i < html.length; i++) {
-        if (html[i] === '{') depth++;
-        else if (html[i] === '}') depth--;
-        if (depth === 0) {
-          try {
-            const pr = JSON.parse(html.slice(braceStart, i + 1));
-            const tracks = normalizeTracks(pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks);
-            return { tracks, apiKey, version };
-          } catch { break; }
-        }
-      }
-    }
-  }
-  return { tracks: [], apiKey, version };
+  const webClientVersion = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1];
+  return { html, apiKey, webClientVersion };
 }
 
-async function fetchTracksFromYoutubei(videoId, apiKey, version) {
+function extractTracksFromPlayerResponse(html) {
+  if (!html) return [];
+  const marker = 'ytInitialPlayerResponse';
+  const idx = html.indexOf(marker);
+  if (idx === -1) return [];
+  const braceStart = html.indexOf('{', idx);
+  if (braceStart === -1) return [];
+  let depth = 0;
+  for (let i = braceStart; i < html.length; i++) {
+    if (html[i] === '{') depth++;
+    else if (html[i] === '}') depth--;
+    if (depth === 0) {
+      try {
+        const pr = JSON.parse(html.slice(braceStart, i + 1));
+        return normalizeTracks(pr?.captions?.playerCaptionsTracklistRenderer?.captionTracks);
+      } catch { break; }
+    }
+  }
+  return [];
+}
+
+async function fetchTracksFromYoutubei(videoId, apiKey, webClientVersion) {
+  if (!apiKey) return [];
   const clients = [
-    { name: 'ANDROID', id: '3', ver: '20.10.38',  ua: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip' },
-    { name: 'IOS',     id: '5', ver: '20.10.4',   ua: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)' },
-    { name: 'WEB',     id: '1', ver: version || '2.20260213.01.00', ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+    { name: 'ANDROID',  id: '3', ver: '20.10.38',          ua: 'com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip' },
+    { name: 'IOS',      id: '5', ver: '20.10.4',            ua: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)' },
+    { name: 'TVHTML5',  id: '7', ver: '7.20260213.01.00',   ua: 'Mozilla/5.0 (CrKey armv7l 1.36.159268) AppleWebKit/537.36 (KHTML, like Gecko) CrKey/1.56.500000 Safari/537.36' },
+    { name: 'WEB',      id: '1', ver: webClientVersion || '2.20260213.01.00', ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
   ];
   for (const c of clients) {
     try {
@@ -244,13 +251,14 @@ async function fetchTracksFromYoutubei(videoId, apiKey, version) {
 // ── Transcript parsing ────────────────────────────────────────────────────────
 
 function parseJson3(payload) {
+  if (!payload) return null;
   try {
     const data = JSON.parse(payload);
     const parts = [];
     for (const event of (data?.events || [])) {
       for (const seg of (event?.segs || [])) {
         const t = typeof seg?.utf8 === 'string' ? seg.utf8 : '';
-        if (t.trim()) parts.push(t);
+        if (t) parts.push(t);
       }
     }
     return parts.length > 0 ? parts.join(' ') : null;
@@ -258,11 +266,23 @@ function parseJson3(payload) {
 }
 
 function parseTimedTextXml(payload) {
-  if (!payload?.trim().startsWith('<')) return '';
+  if (!payload) return '';
+  const normalized = payload.trim();
+  if (!normalized.startsWith('<')) return '';
   const parts = [];
-  const re = /<text\b[^>]*>([\s\S]*?)<\/text>/g;
+
+  // <p> 태그 먼저 시도 (일부 포맷)
+  const pRe = /<p\b[^>]*>([\s\S]*?)<\/p>/g;
   let m;
-  while ((m = re.exec(payload)) !== null) {
+  while ((m = pRe.exec(normalized)) !== null) {
+    const v = decodeEntities((m[1] || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    if (v) parts.push(v);
+  }
+  if (parts.length > 0) return parts.join(' ');
+
+  // <text> 태그 fallback
+  const textRe = /<text\b[^>]*>([\s\S]*?)<\/text>/g;
+  while ((m = textRe.exec(normalized)) !== null) {
     const v = decodeEntities(m[1] || '').replace(/\s+/g, ' ').trim();
     if (v) parts.push(v);
   }
@@ -277,7 +297,7 @@ async function fetchTranscriptText(videoId, track) {
     return `https://www.youtube.com/api/timedtext?${p}`;
   })();
 
-  const jsonUrl = baseUrl.includes('?') ? `${baseUrl}&fmt=json3` : `${baseUrl}?fmt=json3`;
+  const jsonUrl = ensureQueryParam(baseUrl, 'fmt', 'json3');
   const jsonText = await fetchText(jsonUrl).catch(() => '');
   const fromJson = parseJson3(jsonText);
   if (fromJson) return fromJson;
@@ -289,7 +309,7 @@ async function fetchTranscriptText(videoId, track) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.error(`[fetch-transcript] videoId=${videoId} lang=${lang} preferAuto=${preferAuto} max=${maxLength}`);
+  console.error(`[fetch-transcript] videoId=${videoId} lang=${lang} preferAuto=${preferAuto}`);
 
   let tracks = [];
 
@@ -301,26 +321,28 @@ async function main() {
     console.error(`[fetch-transcript] timedtext API failed — ${e.message}`);
   }
 
-  // Strategy 2: watch page player response
-  let apiKey, version;
+  // Strategy 2: YouTubei internal API + watch page extraction
   if (tracks.length === 0) {
+    let watchPage;
     try {
-      const page = await fetchWatchPage(videoId);
-      tracks = page.tracks;
-      apiKey = page.apiKey;
-      version = page.version;
-      console.error(`[fetch-transcript] watch page — tracks: ${tracks.length}`);
+      watchPage = await fetchWatchPageContext(videoId);
+      console.error(`[fetch-transcript] watch page fetched — apiKey: ${!!watchPage.apiKey}`);
     } catch (e) {
       console.error(`[fetch-transcript] watch page failed — ${e.message}`);
     }
-  }
 
-  // Strategy 3: YouTubei internal API
-  if (tracks.length === 0 && apiKey) {
-    try {
-      tracks = await fetchTracksFromYoutubei(videoId, apiKey, version);
-    } catch (e) {
-      console.error(`[fetch-transcript] YouTubei all clients failed — ${e.message}`);
+    if (watchPage?.apiKey) {
+      try {
+        tracks = await fetchTracksFromYoutubei(videoId, watchPage.apiKey, watchPage.webClientVersion);
+      } catch (e) {
+        console.error(`[fetch-transcript] YouTubei all clients failed — ${e.message}`);
+      }
+    }
+
+    // Strategy 3: extract baseUrl directly from player response in watch page HTML
+    if (tracks.length === 0 && watchPage?.html) {
+      tracks = extractTracksFromPlayerResponse(watchPage.html);
+      console.error(`[fetch-transcript] player response extraction — tracks: ${tracks.length}`);
     }
   }
 
@@ -352,18 +374,15 @@ async function main() {
     process.exit(1);
   }
 
-  const trimmed = text.replace(/\s+/g, ' ').trim().slice(0, maxLength);
-  const truncated = text.replace(/\s+/g, ' ').trim().length > maxLength;
+  const normalized = text.replace(/\s+/g, ' ').trim();
 
-  // Structured JSON to stdout
   console.log(JSON.stringify({
     videoId,
     url: `https://www.youtube.com/watch?v=${videoId}`,
     lang: track.lang_code,
     isAuto: track.kind === 'asr',
-    truncated,
-    charCount: trimmed.length,
-    text: trimmed,
+    charCount: normalized.length,
+    text: normalized,
   }));
 }
 
